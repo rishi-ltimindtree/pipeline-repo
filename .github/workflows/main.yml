@@ -1,19 +1,18 @@
 
 name: Build WAR and Push Docker Image to ECR
- 
+
 on:
   push:
-    branches: [ master ]
+    branches: [ master ]        # Change to 'main' if that's your default
   workflow_dispatch:
 
 jobs:
   build-and-push:
-    # Your self-hosted runner must be registered with labels: self-hosted and dev
-    runs-on: [self-hosted, dev]
+    runs-on: [self-hosted, dev] # Ensure your runner has label 'dev'; otherwise use just 'self-hosted'
     environment: ECR Secrets
 
     env:
-      IMAGE_TAG: latest
+      IMAGE_TAG: latest         # Consider ${{ github.sha }} for unique tags per commit
 
     steps:
       - name: Checkout source code
@@ -26,32 +25,24 @@ jobs:
       - name: Build WAR
         shell: bash
         run: ./build.sh
-        # Ensure your Dockerfile copies the WAR from the right path (e.g., target/*.war)
+        # Ensure your Dockerfile copies the WAR from the correct path (e.g., target/*.war)
 
-      # ── Uncomment this block if you are using static access keys in secrets ──
-      # - name: Configure AWS credentials (static keys)
-      #   shell: bash
-      #   env:
-      #     AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      #     AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      #     AWS_REGION: ${{ secrets.AWS_REGION }}
-      #   run: |
-      #     aws configure set aws_access_key_id "$AWS_ACCESS_KEY_ID"
-      #     aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY"
-      #     aws configure set region "$AWS_REGION"
-
-      - name: Debug secrets (names only)
+      - name: Configure AWS credentials (static keys)
         shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
         run: |
-          echo "REGISTRY=[${{ secrets.ECR_REGISTRY }}]"
-          echo "REPOSITORY=[${{ secrets.ECR_REPOSITORY }}]"
-          echo "REGION=[${{ secrets.AWS_REGION }}]"
+          aws configure set aws_access_key_id "$AWS_ACCESS_KEY_ID"
+          aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY"
+          aws configure set region "$AWS_REGION"
 
       - name: Login to Amazon ECR
         shell: bash
         run: |
-          aws ecr get-login-password --region "${{ secrets.AWS_REGION }}" \
-          | docker login --username AWS --password-stdin "${{ secrets.ECR_REGISTRY }}"
+         aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 648925169899.dkr.ecr.ap-south-1.amazonaws.com
+         
 
       - name: Ensure ECR repository exists (idempotent)
         shell: bash
@@ -73,7 +64,14 @@ jobs:
       - name: Push image to ECR
         shell: bash
         run: |
-          docker push "${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:${IMAGE_TAG}"
+          docker tag mindtree:latest 648925169899.dkr.ecr.ap-south-1.amazonaws.com/mindtree:latest
+
+      - name: (Optional) Also tag & push :latest
+        shell: bash
+        run: |
+          docker tag "${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:${IMAGE_TAG}" \
+                     "${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest"
+          docker push "${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest"
 
       - name: Remove old container and run new one from ECR
         shell: bash
@@ -82,5 +80,6 @@ jobs:
           docker pull "${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:${IMAGE_TAG}"
           docker run -d --name tomcat-app -p 8080:8080 \
             "${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:${IMAGE_TAG}"
+
 
 
