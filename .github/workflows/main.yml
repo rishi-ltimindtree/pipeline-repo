@@ -1,3 +1,4 @@
+
 name: Build WAR and Push Docker Image to ECR
 
 on:
@@ -7,6 +8,7 @@ on:
 
 jobs:
   build-and-push:
+    # Your self-hosted runner must be registered with labels: self-hosted and dev
     runs-on: [self-hosted, dev]
     environment: ECR Secrets
 
@@ -18,29 +20,67 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Make build.sh executable
+        shell: bash
         run: chmod +x build.sh
 
       - name: Build WAR
+        shell: bash
         run: ./build.sh
-        # Ensure ROOT.war is at repo root or update Dockerfile COPY path
+        # Ensure your Dockerfile copies the WAR from the right path (e.g., target/*.war)
 
-      - name: Debug secrets (check for whitespace)
+      # ── Uncomment this block if you are using static access keys in secrets ──
+      # - name: Configure AWS credentials (static keys)
+      #   shell: bash
+      #   env:
+      #     AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      #     AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      #     AWS_REGION: ${{ secrets.AWS_REGION }}
+      #   run: |
+      #     aws configure set aws_access_key_id "$AWS_ACCESS_KEY_ID"
+      #     aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY"
+      #     aws configure set region "$AWS_REGION"
+
+      - name: Debug secrets (names only)
+        shell: bash
         run: |
           echo "REGISTRY=[${{ secrets.ECR_REGISTRY }}]"
           echo "REPOSITORY=[${{ secrets.ECR_REPOSITORY }}]"
           echo "REGION=[${{ secrets.AWS_REGION }}]"
 
       - name: Login to Amazon ECR
-        run: aws ecr get-login-password --region "${{ secrets.AWS_REGION }}" | docker login --username AWS --password-stdin "${{ secrets.ECR_REGISTRY }}"
+        shell: bash
+        run: |
+          aws ecr get-login-password --region "${{ secrets.AWS_REGION }}" \
+          | docker login --username AWS --password-stdin "${{ secrets.ECR_REGISTRY }}"
 
-      - name: Build Docker image (Tomcat + WAR) with full ECR name
-        run: docker build -t "${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:${IMAGE_TAG}" .
+      - name: Ensure ECR repository exists (idempotent)
+        shell: bash
+        run: |
+          aws ecr describe-repositories \
+            --repository-names "${{ secrets.ECR_REPOSITORY }}" \
+            --region "${{ secrets.AWS_REGION }}" \
+          || aws ecr create-repository \
+               --repository-name "${{ secrets.ECR_REPOSITORY }}" \
+               --region "${{ secrets.AWS_REGION }}"
+
+      - name: Build Docker image (Tomcat + WAR)
+        shell: bash
+        run: |
+          docker build \
+            -t "${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:${IMAGE_TAG}" \
+            .
 
       - name: Push image to ECR
-        run: docker push "${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:${IMAGE_TAG}"
+        shell: bash
+        run: |
+          docker push "${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:${IMAGE_TAG}"
 
-- name: Remove old container and run new one
-  run: |
-    docker rm -f tomcat-app || true
-    docker run -d --name tomcat-app -p 8080:8080 my-tomcat-app:latest
+      - name: Remove old container and run new one from ECR
+        shell: bash
+        run: |
+          docker rm -f tomcat-app || true
+          docker pull "${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:${IMAGE_TAG}"
+          docker run -d --name tomcat-app -p 8080:8080 \
+            "${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:${IMAGE_TAG}"
+
 
