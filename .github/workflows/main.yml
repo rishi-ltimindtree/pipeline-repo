@@ -2,7 +2,7 @@ name: Build WAR and Push Docker Image to ECR
 
 on:
   push:
-    branches: [master]
+    branches: [master] 
   workflow_dispatch:
 
 jobs:
